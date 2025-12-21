@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <PubSubClient.h>
 
 // ===== PIN CONFIGURATION =====
@@ -19,6 +20,10 @@ const int mqttPort = 1883;
 const char* mqttUser = "lpomtbnx:lpomtbnx";
 const char* mqttPass = "9htYKaGbPej2YOYyHYGZEbkWdpDdT0Mv";
 const char* mqttClientId = "diesel_heater_remote";
+
+// ===== UDP Configuration =====
+#define UDP_PORT 4211  // Port to listen for UDP commands from ESP32-S3
+WiFiUDP udp;
 
 // ===== GLOBALS =====
 WiFiClient wifiClient;
@@ -57,6 +62,11 @@ void connectWiFi() {
     Serial.print("WiFi OK - IP: ");
     Serial.println(WiFi.localIP());
     digitalWrite(LED_PIN, HIGH);
+    
+    // Start UDP server
+    udp.begin(UDP_PORT);
+    Serial.print("UDP server started on port ");
+    Serial.println(UDP_PORT);
   } else {
     Serial.println("WiFi FAILED");
     digitalWrite(LED_PIN, LOW);
@@ -95,6 +105,41 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+void processUDPCommand() {
+  int packetSize = udp.parsePacket();
+  if (packetSize) {
+    char incomingPacket[255];
+    int len = udp.read(incomingPacket, 255);
+    if (len > 0) {
+      incomingPacket[len] = 0;  // Null terminate
+    }
+    
+    Serial.print("UDP received: ");
+    Serial.print(incomingPacket);
+    Serial.print(" from ");
+    Serial.print(udp.remoteIP());
+    Serial.print(":");
+    Serial.println(udp.remotePort());
+    
+    // Process command
+    if (strcmp(incomingPacket, "power") == 0) {
+      pendingButtonPress = 0;
+      Serial.println("-> Triggering POWER button");
+    } else if (strcmp(incomingPacket, "down") == 0) {
+      pendingButtonPress = 1;
+      Serial.println("-> Triggering DOWN button");
+    } else if (strcmp(incomingPacket, "up") == 0) {
+      pendingButtonPress = 2;
+      Serial.println("-> Triggering UP button");
+    } else if (strcmp(incomingPacket, "mode") == 0) {
+      pendingButtonPress = 3;
+      Serial.println("-> Triggering MODE button");
+    } else {
+      Serial.println("-> Unknown command");
+    }
+  }
+}
+
 void updateButtons() {
   // Check if any button press duration has expired
   for (int i = 0; i < 4; i++) {
@@ -104,7 +149,7 @@ void updateButtons() {
         digitalWrite(buttonPins[i], LOW);  // Release button
         buttonActive[i] = false;
         Serial.print("Button ");
-        Serial.print(i);
+        Serial.print(buttonNames[i]);
         Serial.println(" released");
       }
     }
@@ -112,44 +157,11 @@ void updateButtons() {
 }
 
 // ===== SETUP =====
-// Debug function to test all GPIO pins
-void debugAllPins() {
-  Serial.println("\n\n=== GPIO PIN TEST ===");
-  Serial.println("Testing each GPIO pin - should pulse LOW for 1 second each\n");
-  
-  // Test all common GPIO pins on ESP32-C3
-  int testPins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
-  int numPins = sizeof(testPins) / sizeof(testPins[0]);
-  
-  for (int i = 0; i < numPins; i++) {
-    int pin = testPins[i];
-    Serial.print("Testing GPIO");
-    Serial.print(pin);
-    Serial.print(" - Setting LOW for 1 second... ");
-    
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, HIGH);
-    delay(100);
-    digitalWrite(pin, LOW);   // Pull LOW
-    delay(1000);
-    digitalWrite(pin, HIGH);  // Release
-    
-    Serial.println("DONE");
-    delay(500);
-  }
-  
-  Serial.println("\n=== GPIO PIN TEST COMPLETE ===\n");
-}
-
 void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  Serial.println("\n\n=== Diesel Heater Remote ===\n");
-  
-  // Uncomment the line below to run GPIO pin debug test
-   //debugAllPins();
-   //return;  // Comment out to skip normal startup
+  Serial.println("\n\n=== Diesel Heater Remote (UDP + MQTT) ===\n");
   
   // LED
   pinMode(LED_PIN, OUTPUT);
@@ -163,12 +175,13 @@ void setup() {
   
   // WiFi
   connectWiFi();
+  
   // MQTT
   mqttClient.setServer(mqttBroker, mqttPort);
   mqttClient.setCallback(mqttCallback);
   connectMQTT();
   
-  Serial.println("Ready - Waiting for MQTT commands\n");
+  Serial.println("Ready - Waiting for UDP/MQTT commands\n");
 }
 
 // ===== LOOP =====
@@ -182,6 +195,7 @@ void loop() {
       lastWiFiAttempt = millis();
     }
   }
+  
   // MQTT
   if (!mqttClient.connected()) {
     if (millis() - lastMqttReconnect > 5000) {
@@ -192,20 +206,23 @@ void loop() {
     mqttClient.loop();
   }
   
+  // Process UDP commands
+  processUDPCommand();
+  
   // Update button states (release expired presses)
   updateButtons();
   
-  // Handle pending button press from MQTT callback
-  if (pendingButtonPress >= 0 && pendingButtonPress < 3) {
+  // Handle pending button press from MQTT/UDP callback
+  if (pendingButtonPress >= 0 && pendingButtonPress < 4) {
     int btn = pendingButtonPress;
     digitalWrite(buttonPins[btn], HIGH);
     buttonActive[btn] = true;
     buttonPressTime[btn] = millis();
     Serial.print("Button ");
-    Serial.print(btn);
+    Serial.print(buttonNames[btn]);
     Serial.println(" activated");
     pendingButtonPress = -1;  // Clear flag
   }
   
-  delay(50);
+  delay(10);  // Reduced delay for faster UDP response
 }
