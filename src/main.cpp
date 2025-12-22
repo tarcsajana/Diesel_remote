@@ -4,10 +4,10 @@
 #include <PubSubClient.h>
 
 // ===== PIN CONFIGURATION =====
-#define BUTTON_POWER 1   
-#define BUTTON_DOWN  2   
-#define BUTTON_UP    3
-#define BUTTON_MODE  4
+#define BUTTON_POWER 20   
+#define BUTTON_DOWN  10   
+#define BUTTON_UP    9
+#define BUTTON_MODE  7
 #define LED_PIN 8
 
 // ===== WIFI (hardcoded) =====
@@ -76,6 +76,12 @@ void connectWiFi() {
 void connectMQTT() {
   if (mqttClient.connected()) return;
   
+  // Don't attempt MQTT connection if WiFi is not connected
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("MQTT: WiFi not connected, skipping MQTT connection");
+    return;
+  }
+  
   Serial.print("MQTT connecting...");
   if (mqttClient.connect(mqttClientId, mqttUser, mqttPass)) {
     Serial.println(" OK");
@@ -102,6 +108,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     pendingButtonPress = 1;
   } else if (strcmp(topic, "diesel_heater/up") == 0) {
     pendingButtonPress = 2;
+  } else if (strcmp(topic, "diesel_heater/mode") == 0) {
+    pendingButtonPress = 3;
   }
 }
 
