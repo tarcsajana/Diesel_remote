@@ -7,9 +7,9 @@
 
 // ===== PIN CONFIGURATION =====
 #define BUTTON_POWER 20   
-#define BUTTON_DOWN  10   
-#define BUTTON_UP    9
-#define BUTTON_MODE  7
+#define BUTTON_DOWN  7   
+#define BUTTON_UP    10
+#define BUTTON_MODE  9
 #define LED_PIN 8
 
 // ===== DS18B20 PINs =====
@@ -48,7 +48,7 @@ const char* buttonTopics[4] = {"diesel_heater/power", "diesel_heater/down", "die
 unsigned long buttonPressTime[4] = {0, 0, 0, 0};  // Time when button was pressed
 bool buttonActive[4] = {false, false, false, false};  // Is button currently active
 // Per-button pulse durations: POWER = 2000ms, others = 1000ms
-const unsigned long BUTTON_PULSE_POWER_MS = 2000;
+const unsigned long BUTTON_PULSE_POWER_MS = 3000;
 const unsigned long BUTTON_PULSE_OTHER_MS = 1000;
 unsigned long buttonPulseMs[4] = {BUTTON_PULSE_POWER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS};
 
