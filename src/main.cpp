@@ -59,6 +59,8 @@ volatile int pendingButtonPress = -1;  // Flag for pending button press (-1 = no
 // Temperature polling
 unsigned long lastTempRead = 0;
 const unsigned long TEMP_POLL_INTERVAL = 5000;  // 5 seconds
+float lastAirTemp = NAN;
+float lastCarTemp = NAN;
 
 // ===== FUNCTIONS =====
 void connectWiFi() {
@@ -167,6 +169,14 @@ void processUDPCommand() {
     } else if (cmd == "mode") {
       pendingButtonPress = 3;
       Serial.println("-> Triggering MODE button");
+    } else if (cmd == "temps") {
+      // Reply with latest cached temperatures as JSON
+      char out[64];
+      snprintf(out, sizeof(out), "{\"air\":%.1f,\"car\":%.1f}", lastAirTemp, lastCarTemp);
+      udp.beginPacket(udp.remoteIP(), udp.remotePort());
+      udp.write((const uint8_t*)out, strlen(out));
+      udp.endPacket();
+      Serial.println("-> Sent temps JSON over UDP");
     } else {
       Serial.println("-> Unknown command");
     }
@@ -282,15 +292,15 @@ void loop() {
     lastTempRead = millis();
     sensorsAir.requestTemperatures();
     sensorsCar.requestTemperatures();
-    float airTemp = sensorsAir.getTempCByIndex(0);
-    float carTemp = sensorsCar.getTempCByIndex(0);
-    Serial.print("Temps -> Air: "); Serial.print(airTemp);
-    Serial.print(" C, Car: "); Serial.print(carTemp); Serial.println(" C");
+    lastAirTemp = sensorsAir.getTempCByIndex(0);
+    lastCarTemp = sensorsCar.getTempCByIndex(0);
+    Serial.print("Temps -> Air: "); Serial.print(lastAirTemp);
+    Serial.print(" C, Car: "); Serial.print(lastCarTemp); Serial.println(" C");
     if (mqttClient.connected()) {
       char bufAir[16];
       char bufCar[16];
-      snprintf(bufAir, sizeof(bufAir), "%.1f", airTemp);
-      snprintf(bufCar, sizeof(bufCar), "%.1f", carTemp);
+      snprintf(bufAir, sizeof(bufAir), "%.1f", lastAirTemp);
+      snprintf(bufCar, sizeof(bufCar), "%.1f", lastCarTemp);
       mqttClient.publish("diesel_heater/air_temp", bufAir, true);
       mqttClient.publish("diesel_heater/car_temp", bufCar, true);
     }
