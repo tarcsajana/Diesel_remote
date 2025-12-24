@@ -58,7 +58,7 @@ volatile int pendingButtonPress = -1;  // Flag for pending button press (-1 = no
 
 // Temperature polling
 unsigned long lastTempRead = 0;
-const unsigned long TEMP_POLL_INTERVAL = 5000;  // 5 seconds
+const unsigned long TEMP_POLL_INTERVAL = 15000;  // 15 seconds
 float lastAirTemp = NAN;
 float lastCarTemp = NAN;
 
