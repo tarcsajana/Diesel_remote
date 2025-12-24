@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <PubSubClient.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 // ===== PIN CONFIGURATION =====
 #define BUTTON_POWER 20   
@@ -9,6 +11,10 @@
 #define BUTTON_UP    9
 #define BUTTON_MODE  7
 #define LED_PIN 8
+
+// ===== DS18B20 PINs =====
+#define DS18B20_AIR_PIN 1
+#define DS18B20_CAR_PIN 2
 
 // ===== WIFI (hardcoded) =====
 const char* ssid = "HunorCar";
@@ -29,16 +35,30 @@ WiFiUDP udp;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
+// OneWire + DallasTemperature for two sensors
+OneWire oneWireAir(DS18B20_AIR_PIN);
+DallasTemperature sensorsAir(&oneWireAir);
+OneWire oneWireCar(DS18B20_CAR_PIN);
+DallasTemperature sensorsCar(&oneWireCar);
+
 int buttonPins[4] = {BUTTON_POWER, BUTTON_DOWN, BUTTON_UP, BUTTON_MODE};
 const char* buttonNames[4] = {"POWER", "DOWN", "UP", "MODE"};
 const char* buttonTopics[4] = {"diesel_heater/power", "diesel_heater/down", "diesel_heater/up", "diesel_heater/mode"};
 
 unsigned long buttonPressTime[4] = {0, 0, 0, 0};  // Time when button was pressed
 bool buttonActive[4] = {false, false, false, false};  // Is button currently active
-const unsigned long BUTTON_PULSE_TIME = 500;   // 500ms button press simulation
+// Per-button pulse durations: POWER = 2000ms, others = 1000ms
+const unsigned long BUTTON_PULSE_POWER_MS = 2000;
+const unsigned long BUTTON_PULSE_OTHER_MS = 1000;
+unsigned long buttonPulseMs[4] = {BUTTON_PULSE_POWER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS};
 
 unsigned long lastMqttReconnect = 0;
+unsigned long mqttReconnectInterval = 5000;  // start with 5s, back off to 60s max
 volatile int pendingButtonPress = -1;  // Flag for pending button press (-1 = none)
+
+// Temperature polling
+unsigned long lastTempRead = 0;
+const unsigned long TEMP_POLL_INTERVAL = 5000;  // 5 seconds
 
 // ===== FUNCTIONS =====
 void connectWiFi() {
@@ -46,6 +66,8 @@ void connectWiFi() {
   Serial.println(ssid);
   
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);  // Set TX power to -8.5dBm
   
@@ -83,7 +105,7 @@ void connectMQTT() {
   }
   
   Serial.print("MQTT connecting...");
-  if (mqttClient.connect(mqttClientId, mqttUser, mqttPass)) {
+  if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, "diesel_heater/status", 0, true, "offline")) {
     Serial.println(" OK");
     mqttClient.publish("diesel_heater/status", "online", true);
     
@@ -129,17 +151,20 @@ void processUDPCommand() {
     Serial.print(":");
     Serial.println(udp.remotePort());
     
-    // Process command
-    if (strcmp(incomingPacket, "power") == 0) {
+    // Process command (case-insensitive, trimmed)
+    String cmd = String(incomingPacket);
+    cmd.trim();
+    cmd.toLowerCase();
+    if (cmd == "power") {
       pendingButtonPress = 0;
       Serial.println("-> Triggering POWER button");
-    } else if (strcmp(incomingPacket, "down") == 0) {
+    } else if (cmd == "down") {
       pendingButtonPress = 1;
       Serial.println("-> Triggering DOWN button");
-    } else if (strcmp(incomingPacket, "up") == 0) {
+    } else if (cmd == "up") {
       pendingButtonPress = 2;
       Serial.println("-> Triggering UP button");
-    } else if (strcmp(incomingPacket, "mode") == 0) {
+    } else if (cmd == "mode") {
       pendingButtonPress = 3;
       Serial.println("-> Triggering MODE button");
     } else {
@@ -153,7 +178,7 @@ void updateButtons() {
   for (int i = 0; i < 4; i++) {
     if (buttonActive[i]) {
       unsigned long elapsed = millis() - buttonPressTime[i];
-      if (elapsed >= BUTTON_PULSE_TIME) {
+      if (elapsed >= buttonPulseMs[i]) {
         digitalWrite(buttonPins[i], LOW);  // Release button
         buttonActive[i] = false;
         Serial.print("Button ");
@@ -187,7 +212,18 @@ void setup() {
   // MQTT
   mqttClient.setServer(mqttBroker, mqttPort);
   mqttClient.setCallback(mqttCallback);
+  mqttClient.setKeepAlive(30);
+  mqttClient.setBufferSize(256);
   connectMQTT();
+
+  // DS18B20 sensors
+  // Enable weak internal pull-ups (still use external 4.7k to 3.3V)
+  pinMode(DS18B20_AIR_PIN, INPUT_PULLUP);
+  pinMode(DS18B20_CAR_PIN, INPUT_PULLUP);
+  sensorsAir.begin();
+  sensorsCar.begin();
+  sensorsAir.setResolution(12);
+  sensorsCar.setResolution(12);
   
   Serial.println("Ready - Waiting for UDP/MQTT commands\n");
 }
@@ -206,9 +242,16 @@ void loop() {
   
   // MQTT
   if (!mqttClient.connected()) {
-    if (millis() - lastMqttReconnect > 5000) {
+    if (millis() - lastMqttReconnect > mqttReconnectInterval) {
       connectMQTT();
       lastMqttReconnect = millis();
+      if (mqttClient.connected()) {
+        mqttReconnectInterval = 5000;
+      } else {
+        if (mqttReconnectInterval < 60000) {
+          mqttReconnectInterval = min(mqttReconnectInterval * 2, 60000UL);
+        }
+      }
     }
   } else {
     mqttClient.loop();
@@ -233,4 +276,23 @@ void loop() {
   }
   
   delay(10);  // Reduced delay for faster UDP response
+
+  // Periodically read and publish temperatures
+  if (millis() - lastTempRead >= TEMP_POLL_INTERVAL) {
+    lastTempRead = millis();
+    sensorsAir.requestTemperatures();
+    sensorsCar.requestTemperatures();
+    float airTemp = sensorsAir.getTempCByIndex(0);
+    float carTemp = sensorsCar.getTempCByIndex(0);
+    Serial.print("Temps -> Air: "); Serial.print(airTemp);
+    Serial.print(" C, Car: "); Serial.print(carTemp); Serial.println(" C");
+    if (mqttClient.connected()) {
+      char bufAir[16];
+      char bufCar[16];
+      snprintf(bufAir, sizeof(bufAir), "%.1f", airTemp);
+      snprintf(bufCar, sizeof(bufCar), "%.1f", carTemp);
+      mqttClient.publish("diesel_heater/air_temp", bufAir, true);
+      mqttClient.publish("diesel_heater/car_temp", bufCar, true);
+    }
+  }
 }
