@@ -52,31 +52,52 @@ const unsigned long BUTTON_PULSE_POWER_MS = 3000;
 const unsigned long BUTTON_PULSE_OTHER_MS = 1000;
 unsigned long buttonPulseMs[4] = {BUTTON_PULSE_POWER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS, BUTTON_PULSE_OTHER_MS};
 
+unsigned long lastMqttReconnect = 0;
+unsigned long mqttReconnectInterval = 5000;  // start with 5s, back off to 60s max
 volatile int pendingButtonPress = -1;  // Flag for pending button press (-1 = none)
 
 // Temperature polling
 unsigned long lastTempRead = 0;
-const unsigned long TEMP_POLL_INTERVAL = 30000;  // 30 seconds
+const unsigned long TEMP_POLL_INTERVAL = 15000;  // 15 seconds
 float lastAirTemp = NAN;
 float lastCarTemp = NAN;
 
 // ===== FUNCTIONS =====
 void connectWiFi() {
-  // Configure static IP: 192.168.1.102
-  IPAddress staticIP(192, 168, 1, 102);
-  IPAddress gateway(192, 168, 1, 1);
-  IPAddress subnet(255, 255, 255, 0);
-  IPAddress dns(192, 168, 1, 1);
+  Serial.print("Connecting WiFi: ");
+  Serial.println(ssid);
   
   WiFi.mode(WIFI_STA);
-  WiFi.config(staticIP, gateway, subnet, dns);
-  
-  Serial.print("Connecting to WiFi SSID: ");
-  Serial.println(ssid);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);  // Set TX power to -8.5dBm
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    attempts++;
+  }
+  
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi OK - IP: ");
+    Serial.println(WiFi.localIP());
+    digitalWrite(LED_PIN, HIGH);
+    
+    // Start UDP server
+    udp.begin(UDP_PORT);
+    Serial.print("UDP server started on port ");
+    Serial.println(UDP_PORT);
+  } else {
+    Serial.println("WiFi FAILED");
+    digitalWrite(LED_PIN, LOW);
+  }
 }
 
-void reconnectMQTT() {
+void connectMQTT() {
   if (mqttClient.connected()) return;
   
   // Don't attempt MQTT connection if WiFi is not connected
@@ -85,49 +106,21 @@ void reconnectMQTT() {
     return;
   }
   
-  // Non-blocking reconnection - only try once per call
-  static unsigned long lastReconnectAttempt = 0;
-  unsigned long currentMillis = millis();
-  
-  // Only attempt reconnection every 5 seconds
-  if (currentMillis - lastReconnectAttempt >= 5000) {
-    lastReconnectAttempt = currentMillis;
+  Serial.print("MQTT connecting...");
+  if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, "diesel_heater/status", 0, true, "offline")) {
+    Serial.println(" OK");
+    mqttClient.publish("diesel_heater/status", "online", true);
     
-    // Debug WiFi and DNS status
-    Serial.print("WiFi Status: ");
-    Serial.println(WiFi.status());  // 3 = WL_CONNECTED
-    Serial.print("Signal Strength: ");
-    Serial.println(WiFi.RSSI());
-    
-    // Test DNS resolution
-    IPAddress resolved;
-    Serial.print("Testing DNS resolution for ");
-    Serial.println(mqttBroker);
-    int dnsResult = WiFi.hostByName(mqttBroker, resolved);
-    Serial.print("DNS Result: ");
-    Serial.println(dnsResult);  // 1 = success, 0 = failed
-    if (dnsResult == 1) {
-      Serial.print("Resolved IP: ");
-      Serial.println(resolved);
-    }
-    
-    Serial.print("Connecting to MQTT...");
-    if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, "diesel_heater/status", 0, true, "offline")) {
-      Serial.println("connected");
-      mqttClient.publish("diesel_heater/status", "online", true);
-      
-      // Subscribe to button topics
-      mqttClient.subscribe("diesel_heater/power");
-      mqttClient.subscribe("diesel_heater/down");
-      mqttClient.subscribe("diesel_heater/up");
-      mqttClient.subscribe("diesel_heater/mode");
-      Serial.println("Subscribed to button topics");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" will retry in 5 seconds");
-      // rc=-2 = CONNECT_FAILED, -1 = CONNECT_BAD_PROTOCOL, 0-5 = server rejection
-    }
+    // Subscribe to button topics
+    mqttClient.subscribe("diesel_heater/power");
+    mqttClient.subscribe("diesel_heater/down");
+    mqttClient.subscribe("diesel_heater/up");
+    mqttClient.subscribe("diesel_heater/mode");
+    Serial.println("Subscribed to button topics");
+  } else {
+    Serial.print(" FAILED (rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(")");
   }
 }
 
@@ -231,6 +224,7 @@ void setup() {
   mqttClient.setCallback(mqttCallback);
   mqttClient.setKeepAlive(30);
   mqttClient.setBufferSize(256);
+  connectMQTT();
 
   // DS18B20 sensors
   // Enable weak internal pull-ups (still use external 4.7k to 3.3V)
@@ -246,58 +240,31 @@ void setup() {
 
 // ===== LOOP =====
 void loop() {
-  // Check WiFi connection and retry if disconnected
-  static unsigned long lastWiFiCheck = 0;
-  static bool wasConnected = false;
+  // WiFi reconnect
   if (WiFi.status() != WL_CONNECTED) {
-    if (millis() - lastWiFiCheck >= 10000) {  // Retry every 10 seconds
-      lastWiFiCheck = millis();
-      
-      // Detailed WiFi status
-      Serial.print("WiFi Status: ");
-      Serial.print(WiFi.status());
-      Serial.print(" (");
-      switch(WiFi.status()) {
-        case WL_NO_SSID_AVAIL: Serial.print("SSID not found"); break;
-        case WL_CONNECT_FAILED: Serial.print("Connection failed"); break;
-        case WL_CONNECTION_LOST: Serial.print("Connection lost"); break;
-        case WL_DISCONNECTED: Serial.print("Disconnected"); break;
-        case WL_IDLE_STATUS: Serial.print("Idle"); break;
-        default: Serial.print("Unknown");
-      }
-      Serial.println(")");
-      
-      Serial.print("Retrying WiFi SSID: ");
-      Serial.println(ssid);
-      WiFi.disconnect();
-      WiFi.begin(ssid, password);
-      wasConnected = false;
-    }
-  } else {
-    if (!wasConnected) {
-      Serial.println("WiFi connected!");
-      Serial.print("IP Address: ");
-      Serial.println(WiFi.localIP());
-      Serial.print("Signal Strength (RSSI): ");
-      Serial.print(WiFi.RSSI());
-      Serial.println(" dBm");
-      
-      // Start UDP server when WiFi connects
-      udp.begin(UDP_PORT);
-      Serial.print("UDP server started on port ");
-      Serial.println(UDP_PORT);
-      
-      wasConnected = true;
+    static unsigned long lastWiFiAttempt = 0;
+    if (millis() - lastWiFiAttempt > 10000) {
+      Serial.println("WiFi reconnecting...");
+      connectWiFi();
+      lastWiFiAttempt = millis();
     }
   }
   
-  // MQTT - only if WiFi is connected
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!mqttClient.connected()) {
-      reconnectMQTT();
-    } else {
-      mqttClient.loop();
+  // MQTT
+  if (!mqttClient.connected()) {
+    if (millis() - lastMqttReconnect > mqttReconnectInterval) {
+      connectMQTT();
+      lastMqttReconnect = millis();
+      if (mqttClient.connected()) {
+        mqttReconnectInterval = 5000;
+      } else {
+        if (mqttReconnectInterval < 60000) {
+          mqttReconnectInterval = min(mqttReconnectInterval * 2, 60000UL);
+        }
+      }
     }
+  } else {
+    mqttClient.loop();
   }
   
   // Process UDP commands
