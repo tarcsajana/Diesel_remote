@@ -4,6 +4,7 @@
 #include <PubSubClient.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <ESPmDNS.h>
 
 // ===== PIN CONFIGURATION =====
 #define BUTTON_POWER 20   
@@ -91,6 +92,15 @@ void connectWiFi() {
     udp.begin(UDP_PORT);
     Serial.print("UDP server started on port ");
     Serial.println(UDP_PORT);
+    
+    // Start mDNS to advertise as "diesel-heater.local"
+    if (!MDNS.begin("diesel-heater")) {
+      Serial.println("mDNS start FAILED");
+    } else {
+      Serial.println("mDNS started - accessible as diesel-heater.local");
+      // Optionally add service descriptors
+      MDNS.addService("udp", "diesel-heater", UDP_PORT);
+    }
   } else {
     Serial.println("WiFi FAILED");
     digitalWrite(LED_PIN, LOW);
@@ -204,7 +214,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  Serial.println("\n\n=== Diesel Heater Remote (UDP + MQTT) ===\n");
+  Serial.println("\n\n=== Diesel Heater Remote (UDP + MQTT + mDNS) ===\n");
   
   // LED
   pinMode(LED_PIN, OUTPUT);
