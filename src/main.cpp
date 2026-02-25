@@ -5,6 +5,8 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <ESPmDNS.h>
+#include <WebServer.h>
+#include <FirmwareOTA.h>
 
 // ===== PIN CONFIGURATION =====
 #define BUTTON_POWER 20   
@@ -35,6 +37,8 @@ WiFiUDP udp;
 // ===== GLOBALS =====
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+WebServer webServer(80);
+FirmwareOTA ota(webServer, mqttClient, "diesel_remote", "Diesel Remote");
 
 // OneWire + DallasTemperature for two sensors
 OneWire oneWireAir(DS18B20_AIR_PIN);
@@ -135,7 +139,17 @@ void connectMQTT() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  // Simple callback - just check topic and set flag
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  // Let OTA library handle firmware update commands
+  if (ota.handleMqttUpdate(topic, message)) {
+    return;  // OTA handled it
+  }
+  
+  // Handle button commands
   if (strcmp(topic, "diesel_heater/power") == 0) {
     pendingButtonPress = 0;
   } else if (strcmp(topic, "diesel_heater/down") == 0) {
@@ -236,6 +250,18 @@ void setup() {
   mqttClient.setBufferSize(256);
   connectMQTT();
 
+  // Configure OTA library
+  ota.setVersionInfo("1.0", __DATE__ " " __TIME__);
+  ota.setMqttTopics(
+    "diesel_remote/firmware",      // Firmware info topic
+    "diesel_remote/command",       // Update command topic
+    "diesel_remote/availability"   // Availability topic
+  );
+  ota.setFirmwareUrl("https://github.com/tarcsajana/Diesel_remote/releases/download/OTA/firmware.bin");
+  ota.setupWebRoutes();
+  webServer.begin();
+  Serial.println("Web server started (FirmwareOTA)");
+
   // DS18B20 sensors
   // Enable weak internal pull-ups (still use external 4.7k to 3.3V)
   pinMode(DS18B20_AIR_PIN, INPUT_PULLUP);
@@ -266,6 +292,7 @@ void loop() {
       connectMQTT();
       lastMqttReconnect = millis();
       if (mqttClient.connected()) {
+        ota.publishFirmwareInfo();
         mqttReconnectInterval = 5000;
       } else {
         if (mqttReconnectInterval < 60000) {
@@ -276,6 +303,9 @@ void loop() {
   } else {
     mqttClient.loop();
   }
+  
+  // Handle web server requests
+  webServer.handleClient();
   
   // Process UDP commands
   processUDPCommand();
