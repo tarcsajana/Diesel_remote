@@ -22,6 +22,7 @@
 // ===== WIFI (hardcoded) =====
 const char* ssid = "HunorCar";
 const char* password = "Jucymucy8581";
+const char* githubToken = "";  // GitHub PAT for private release download
 
 // ===== MQTT =====
 const char* mqttBroker = "kebnekaise.lmq.cloudamqp.com";
@@ -257,7 +258,10 @@ void setup() {
     "diesel_remote/command",       // Update command topic
     "diesel_remote/availability"   // Availability topic
   );
-  ota.setFirmwareUrl("https://github.com/tarcsajana/Diesel_remote/releases/download/OTA/firmware.bin");
+  ota.setFirmwareUrl("https://github.com/tarcsajana/Diesel_remote/releases/latest/download/firmware.bin");
+  if (githubToken[0] != '\0') {
+    ota.setGitHubToken(githubToken);
+  }
   ota.setupWebRoutes();
   webServer.begin();
   Serial.println("Web server started (FirmwareOTA)");
