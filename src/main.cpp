@@ -145,9 +145,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     message += (char)payload[i];
   }
   
+  Serial.printf("\n*** MQTT Message Received ***\nTopic: %s\nMessage: %s\n", topic, message.c_str());
+  Serial.printf("Message length: %u bytes\n", length);
+  
+  // Debug: print topic string
+  String topicStr(topic);
+  Serial.printf("Topic string: '%s', length: %u\n", topicStr.c_str(), topicStr.length());
+  
   // Let OTA library handle firmware update commands
+  Serial.printf("Calling ota.handleMqttUpdate()...\n");
   if (ota.handleMqttUpdate(topic, message)) {
+    Serial.println("****** OTA Update Handled by FirmwareOTA ******\n");
     return;  // OTA handled it
+  } else {
+    Serial.println("****** OTA handleMqttUpdate returned false ******\n");
   }
   
   // Handle button commands
