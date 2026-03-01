@@ -252,7 +252,7 @@ void setup() {
   connectMQTT();
 
   // Configure OTA library
-  ota.setVersionInfo("1.0", __DATE__ " " __TIME__);
+  ota.setVersionInfo("1.0.1", __DATE__ " " __TIME__);
   ota.setMqttTopics(
     "diesel_remote/firmware",      // Firmware info topic
     "diesel_remote/command",       // Update command topic
