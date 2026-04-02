@@ -131,7 +131,9 @@ void connectMQTT() {
     mqttClient.subscribe("diesel_heater/down");
     mqttClient.subscribe("diesel_heater/up");
     mqttClient.subscribe("diesel_heater/mode");
-    Serial.println("Subscribed to button topics");
+    // Subscribe to firmware update command topic
+    mqttClient.subscribe("diesel_remote/command");
+    Serial.println("Subscribed to button and firmware update topics");
   } else {
     Serial.print(" FAILED (rc=");
     Serial.print(mqttClient.state());
