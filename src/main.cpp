@@ -22,7 +22,7 @@
 // ===== WIFI (hardcoded) =====
 const char* ssid = "HunorCar";
 const char* password = "Jucymucy8581";
-const char* githubToken = "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";  // GitHub PAT for private release download
+const char* githubToken = "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";  // GitHub PAT for private release download
 
 // ===== MQTT =====
 const char* mqttBroker = "kebnekaise.lmq.cloudamqp.com";
