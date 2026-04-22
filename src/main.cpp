@@ -33,6 +33,7 @@ const int mqttPort = 1883;
 const char* mqttUser = "lpomtbnx:lpomtbnx";
 const char* mqttPass = "9htYKaGbPej2YOYyHYGZEbkWdpDdT0Mv";
 const char* mqttClientId = "diesel_heater_remote";
+const char* mqttStatusTopic = "diesel_remote/status";
 
 // ===== UDP Configuration =====
 #define UDP_PORT 4211  // Port to listen for UDP commands from ESP32-S3
@@ -73,6 +74,15 @@ float lastCarTemp = NAN;
 
 // ===== FUNCTIONS =====
 void publishHADiscovery() {
+  auto publishDiscovery = [&](const String& topic, const String& payload) {
+    bool ok = mqttClient.publish(topic.c_str(), payload.c_str(), true);
+    Serial.printf("HA discovery publish: %s (%u bytes) -> %s\n",
+                  topic.c_str(),
+                  static_cast<unsigned>(payload.length()),
+                  ok ? "OK" : "FAILED");
+    yield();
+  };
+
   // Firmware sensor
   {
     String topic = "homeassistant/sensor/diesel_remote/firmware/config";
@@ -82,8 +92,7 @@ void publishHADiscovery() {
                      "\"value_template\":\"{{ value_json.fw_version ~ ' (' ~ value_json.build_time ~ ')' }}\"," 
                      "\"icon\":\"mdi:chip\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
 
   // OTA self-update button
@@ -95,8 +104,7 @@ void publishHADiscovery() {
                      "\"payload_press\":\"self_update\"," 
                      "\"icon\":\"mdi:update\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
 
   // Physical heater control buttons
@@ -106,11 +114,11 @@ void publishHADiscovery() {
                      "\"unique_id\":\"diesel_heater_power\"," 
                      "\"command_topic\":\"diesel_heater/power\"," 
                      "\"payload_press\":\"PRESS\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
   {
     String topic = "homeassistant/button/diesel_remote/down/config";
@@ -118,11 +126,11 @@ void publishHADiscovery() {
                      "\"unique_id\":\"diesel_heater_down\"," 
                      "\"command_topic\":\"diesel_heater/down\"," 
                      "\"payload_press\":\"PRESS\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
   {
     String topic = "homeassistant/button/diesel_remote/up/config";
@@ -130,11 +138,11 @@ void publishHADiscovery() {
                      "\"unique_id\":\"diesel_heater_up\"," 
                      "\"command_topic\":\"diesel_heater/up\"," 
                      "\"payload_press\":\"PRESS\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
   {
     String topic = "homeassistant/button/diesel_remote/mode/config";
@@ -142,11 +150,11 @@ void publishHADiscovery() {
                      "\"unique_id\":\"diesel_heater_mode\"," 
                      "\"command_topic\":\"diesel_heater/mode\"," 
                      "\"payload_press\":\"PRESS\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
 
   // Temperature sensors
@@ -157,11 +165,11 @@ void publishHADiscovery() {
                      "\"state_topic\":\"diesel_heater/air_temp\"," 
                      "\"unit_of_measurement\":\"C\"," 
                      "\"device_class\":\"temperature\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
   {
     String topic = "homeassistant/sensor/diesel_remote/car_temp/config";
@@ -170,12 +178,14 @@ void publishHADiscovery() {
                      "\"state_topic\":\"diesel_heater/car_temp\"," 
                      "\"unit_of_measurement\":\"C\"," 
                      "\"device_class\":\"temperature\"," 
-                     "\"availability_topic\":\"diesel_heater/status\"," 
+                     "\"availability_topic\":\"diesel_remote/status\"," 
                      "\"payload_available\":\"online\"," 
+                     "\"payload_not_available\":\"offline\"," 
                      "\"device\":{\"identifiers\":[\"diesel_remote\"],\"name\":\"Diesel Remote\"}}";
-    mqttClient.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishDiscovery(topic, payload);
   }
+
+  Serial.println("HA discovery publish sequence complete");
 }
 
 void connectWiFi() {
@@ -231,8 +241,9 @@ void connectMQTT() {
   }
   
   Serial.print("MQTT connecting...");
-  if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, "diesel_heater/status", 0, true, "offline")) {
+  if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, mqttStatusTopic, 0, true, "offline")) {
     Serial.println(" OK");
+    mqttClient.publish(mqttStatusTopic, "online", true);
     mqttClient.publish("diesel_heater/status", "online", true);
     publishHADiscovery();
     
@@ -371,11 +382,11 @@ void setup() {
   mqttClient.setServer(mqttBroker, mqttPort);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setKeepAlive(30);
-  mqttClient.setBufferSize(256);
+  mqttClient.setBufferSize(1024);
   connectMQTT();
 
   // Configure OTA library
-  ota.setVersionInfo("1.0.1", __DATE__ " " __TIME__);
+  ota.setVersionInfo("2.0", __DATE__ " " __TIME__);
   ota.setMqttTopics(
     "diesel_remote/firmware",      // Firmware info topic
     "diesel_remote/command",       // Update command topic
