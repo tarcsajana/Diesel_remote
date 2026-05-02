@@ -243,6 +243,7 @@ void connectMQTT() {
   Serial.print("MQTT connecting...");
   if (mqttClient.connect(mqttClientId, mqttUser, mqttPass, mqttStatusTopic, 0, true, "offline")) {
     Serial.println(" OK");
+    // Always publish status as retained
     mqttClient.publish(mqttStatusTopic, "online", true);
     mqttClient.publish("diesel_heater/status", "online", true);
     publishHADiscovery();
@@ -293,6 +294,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     pendingButtonPress = 2;
   } else if (strcmp(topic, "diesel_heater/mode") == 0) {
     pendingButtonPress = 3;
+  }
+
+  // If we ever explicitly publish offline, make sure it's retained
+  if (strcmp(topic, mqttStatusTopic) == 0 && message == "offline") {
+    mqttClient.publish(mqttStatusTopic, "offline", true);
+    return;
   }
 }
 
